@@ -121,6 +121,7 @@ pub struct Ident {
 impl Ident {
     /// Create a new identifier with the given value and no quotes.
     /// the given value must not be a empty string.
+    // FIXME: should avoid using this function unless it's a literal or for testing.
     pub fn new_unchecked<S>(value: S) -> Self
     where
         S: Into<String>,
@@ -179,7 +180,8 @@ impl Ident {
         }
     }
 
-    /// Convert a real value back to Ident. Behaves the same as SQL function `quote_ident`.
+    /// Convert a real value back to Ident. Behaves the same as SQL function `quote_ident` or
+    /// `QuoteIdent` wrapper in `common` crate.
     pub fn from_real_value(value: &str) -> Self {
         let needs_quotes = value
             .chars()
@@ -198,13 +200,8 @@ impl Ident {
 }
 
 impl From<&str> for Ident {
-    // FIXME: the result is wrong if value contains quote or is case sensitive,
-    //        should use `Ident::from_real_value` instead.
     fn from(value: &str) -> Self {
-        Ident {
-            value: value.to_owned(),
-            quote_style: None,
-        }
+        Self::from_real_value(value)
     }
 }
 
@@ -3082,7 +3079,7 @@ impl fmt::Display for SqlOption {
             })
             .unwrap_or(false);
         if should_redact {
-            write!(f, "{} = '[REDACTED]'", self.name)
+            write!(f, "{} = [REDACTED]", self.name)
         } else {
             write!(f, "{} = {}", self.name, self.value)
         }
@@ -3747,7 +3744,7 @@ impl fmt::Display for BackfillOrderStrategy {
 
 impl Statement {
     pub fn to_redacted_string(&self, keywords: RedactSqlOptionKeywordsRef) -> String {
-        REDACT_SQL_OPTION_KEYWORDS.sync_scope(keywords, || self.to_string())
+        REDACT_SQL_OPTION_KEYWORDS.sync_scope(keywords, || self.to_string_unchecked())
     }
 
     /// Create a new `CREATE TABLE` statement with the given `name` and empty fields.
