@@ -105,6 +105,7 @@ impl ExprVisitor for ImpureAnalyzer {
             | Type::CharLength
             | Type::Repeat
             | Type::ConcatOp
+            | Type::ByteaConcatOp
             | Type::Concat
             | Type::ConcatVariadic
             | Type::BoolOut
@@ -266,6 +267,7 @@ impl ExprVisitor for ImpureAnalyzer {
             | Type::MapCat
             | Type::MapContains
             | Type::MapDelete
+            | Type::MapFilter
             | Type::MapInsert
             | Type::MapLength
             | Type::VnodeUser
@@ -303,7 +305,8 @@ impl ExprVisitor for ImpureAnalyzer {
             | Type::PgIsInRecovery
             | Type::RwRecoveryStatus
             | Type::PgTableIsVisible
-            | Type::HasFunctionPrivilege => self.impure = true,
+            | Type::HasFunctionPrivilege
+            | Type::OpenaiEmbedding => self.impure = true,
         }
     }
 }

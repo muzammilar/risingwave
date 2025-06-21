@@ -117,6 +117,7 @@ impl ControlStreamManager {
         self.workers[&worker_id].host.clone().unwrap()
     }
 
+    #[await_tree::instrument("try_reconnect_worker({worker_id})")]
     pub(super) async fn try_reconnect_worker(
         &mut self,
         worker_id: WorkerId,
@@ -336,6 +337,7 @@ impl ControlStreamManager {
         poll_result
     }
 
+    #[await_tree::instrument("control_stream_next_response")]
     pub(super) async fn next_response(
         &mut self,
     ) -> (
@@ -670,7 +672,10 @@ impl ControlStreamManager {
             background_mviews
                 .iter()
                 .map(|(table_id, (definition, stream_job_fragments))| {
-                    (*table_id, (definition.clone(), stream_job_fragments))
+                    (
+                        *table_id,
+                        (definition.clone(), stream_job_fragments, Default::default()),
+                    )
                 }),
             hummock_version_stats,
         );

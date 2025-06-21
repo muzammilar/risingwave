@@ -98,8 +98,12 @@ use risingwave_pb::meta::system_params_service_client::SystemParamsServiceClient
 use risingwave_pb::meta::telemetry_info_service_client::TelemetryInfoServiceClient;
 use risingwave_pb::meta::update_worker_node_schedulability_request::Schedulability;
 use risingwave_pb::meta::{FragmentDistribution, *};
+use risingwave_pb::monitor_service::monitor_service_client::MonitorServiceClient;
+use risingwave_pb::monitor_service::stack_trace_request::ActorTracesFormat;
+use risingwave_pb::monitor_service::{StackTraceRequest, StackTraceResponse};
 use risingwave_pb::secret::PbSecretRef;
 use risingwave_pb::stream_plan::StreamFragmentGraph;
+use risingwave_pb::user::alter_default_privilege_request::Operation as AlterDefaultPrivilegeOperation;
 use risingwave_pb::user::update_user_request::UpdateField;
 use risingwave_pb::user::user_service_client::UserServiceClient;
 use risingwave_pb::user::*;
@@ -912,6 +916,25 @@ impl MetaClient {
         Ok(resp.version)
     }
 
+    pub async fn alter_default_privilege(
+        &self,
+        user_ids: Vec<u32>,
+        database_id: DatabaseId,
+        schema_ids: Vec<SchemaId>,
+        operation: AlterDefaultPrivilegeOperation,
+        granted_by: u32,
+    ) -> Result<()> {
+        let request = AlterDefaultPrivilegeRequest {
+            user_ids,
+            database_id,
+            schema_ids,
+            operation: Some(operation),
+            granted_by,
+        };
+        self.inner.alter_default_privilege(request).await?;
+        Ok(())
+    }
+
     /// Unregister the current node from the cluster.
     pub async fn unregister(&self) -> Result<()> {
         let request = DeleteWorkerNodeRequest {
@@ -1062,6 +1085,14 @@ impl MetaClient {
         let resp = self
             .inner
             .list_fragment_distribution(ListFragmentDistributionRequest {})
+            .await?;
+        Ok(resp.distributions)
+    }
+
+    pub async fn list_creating_fragment_distribution(&self) -> Result<Vec<FragmentDistribution>> {
+        let resp = self
+            .inner
+            .list_creating_fragment_distribution(ListCreatingFragmentDistributionRequest {})
             .await?;
         Ok(resp.distributions)
     }
@@ -1325,12 +1356,6 @@ impl MetaClient {
         let req = GetTelemetryInfoRequest {};
         let resp = self.inner.get_telemetry_info(req).await?;
         Ok(resp)
-    }
-
-    pub async fn get_system_params(&self) -> Result<SystemParamsReader> {
-        let req = GetSystemParamsRequest {};
-        let resp = self.inner.get_system_params(req).await?;
-        Ok(resp.params.unwrap().into())
     }
 
     pub async fn get_meta_store_endpoint(&self) -> Result<String> {
@@ -1645,6 +1670,18 @@ impl MetaClient {
         let resp = self.inner.list_iceberg_tables(request).await?;
         Ok(resp.iceberg_tables)
     }
+
+    /// Get the await tree of all nodes in the cluster.
+    pub async fn get_cluster_stack_trace(
+        &self,
+        actor_traces_format: ActorTracesFormat,
+    ) -> Result<StackTraceResponse> {
+        let request = StackTraceRequest {
+            actor_traces_format: actor_traces_format as i32,
+        };
+        let resp = self.inner.stack_trace(request).await?;
+        Ok(resp)
+    }
 }
 
 #[async_trait]
@@ -1831,6 +1868,7 @@ struct GrpcMetaClientCore {
     event_log_client: EventLogServiceClient<Channel>,
     cluster_limit_client: ClusterLimitServiceClient<Channel>,
     hosted_iceberg_catalog_service_client: HostedIcebergCatalogServiceClient<Channel>,
+    monitor_client: MonitorServiceClient<Channel>,
 }
 
 impl GrpcMetaClientCore {
@@ -1859,7 +1897,9 @@ impl GrpcMetaClientCore {
         let sink_coordinate_client = SinkCoordinationServiceClient::new(channel.clone());
         let event_log_client = EventLogServiceClient::new(channel.clone());
         let cluster_limit_client = ClusterLimitServiceClient::new(channel.clone());
-        let hosted_iceberg_catalog_service_client = HostedIcebergCatalogServiceClient::new(channel);
+        let hosted_iceberg_catalog_service_client =
+            HostedIcebergCatalogServiceClient::new(channel.clone());
+        let monitor_client = MonitorServiceClient::new(channel);
 
         GrpcMetaClientCore {
             cluster_client,
@@ -1881,6 +1921,7 @@ impl GrpcMetaClientCore {
             event_log_client,
             cluster_limit_client,
             hosted_iceberg_catalog_service_client,
+            monitor_client,
         }
     }
 }
@@ -2227,6 +2268,7 @@ macro_rules! for_all_meta_rpc {
             ,{ stream_client, list_table_fragments, ListTableFragmentsRequest, ListTableFragmentsResponse }
             ,{ stream_client, list_streaming_job_states, ListStreamingJobStatesRequest, ListStreamingJobStatesResponse }
             ,{ stream_client, list_fragment_distribution, ListFragmentDistributionRequest, ListFragmentDistributionResponse }
+            ,{ stream_client, list_creating_fragment_distribution, ListCreatingFragmentDistributionRequest, ListCreatingFragmentDistributionResponse }
             ,{ stream_client, list_actor_states, ListActorStatesRequest, ListActorStatesResponse }
             ,{ stream_client, list_actor_splits, ListActorSplitsRequest, ListActorSplitsResponse }
             ,{ stream_client, list_object_dependencies, ListObjectDependenciesRequest, ListObjectDependenciesResponse }
@@ -2311,6 +2353,7 @@ macro_rules! for_all_meta_rpc {
             ,{ user_client, drop_user, DropUserRequest, DropUserResponse }
             ,{ user_client, grant_privilege, GrantPrivilegeRequest, GrantPrivilegeResponse }
             ,{ user_client, revoke_privilege, RevokePrivilegeRequest, RevokePrivilegeResponse }
+            ,{ user_client, alter_default_privilege, AlterDefaultPrivilegeRequest, AlterDefaultPrivilegeResponse }
             ,{ scale_client, get_cluster_info, GetClusterInfoRequest, GetClusterInfoResponse }
             ,{ scale_client, reschedule, RescheduleRequest, RescheduleResponse }
             ,{ notification_client, subscribe, SubscribeRequest, Streaming<SubscribeResponse> }
@@ -2329,6 +2372,7 @@ macro_rules! for_all_meta_rpc {
             ,{ event_log_client, add_event_log, AddEventLogRequest, AddEventLogResponse }
             ,{ cluster_limit_client, get_cluster_limits, GetClusterLimitsRequest, GetClusterLimitsResponse }
             ,{ hosted_iceberg_catalog_service_client, list_iceberg_tables, ListIcebergTablesRequest, ListIcebergTablesResponse }
+            ,{ monitor_client, stack_trace, StackTraceRequest, StackTraceResponse }
         }
     };
 }
